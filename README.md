@@ -6,6 +6,13 @@ los botones funcionales, y la oled mostrara todo bonito.
 
 el hardwear real SI usara Wifi y spotify API y se mostrara en el codigo.
 
+!!! 3D DISIGN THINKERCARD !!!
+https://www.tinkercad.com/things/85gUmQEyrX8-neat-luulia-snicket
+
+
+
+
+
 <img width="1090" height="545" alt="3D DISIGN" src="https://github.com/user-attachments/assets/4bc9add3-6261-4e19-83e1-5c7749cb8bde" />
 https://www.tinkercad.com/things/85gUmQEyrX8-neat-luulia-snicket
 ![IPOD ATRAS ATA AS](https://github.com/user-attachments/assets/7cb8774b-bf7e-47c7-9196-7cd356e0a339)
