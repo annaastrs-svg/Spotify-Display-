@@ -18,3 +18,8 @@ https://www.tinkercad.com/things/85gUmQEyrX8-neat-luulia-snicket
 ![IPOD ATRAS ATA AS](https://github.com/user-attachments/assets/7cb8774b-bf7e-47c7-9196-7cd356e0a339)
 
 ![IPOD 3D DIGN](https://github.com/user-attachments/assets/b2365740-9a0b-4593-b6c7-fdc2efd8cec9)
+<img width="1366" height="623" alt="image" src="https://github.com/user-attachments/assets/bf392213-83e4-44a1-9209-6912a1f8efb1" />
+
+<img width="1366" height="629" alt="image" src="https://github.com/user-attachments/assets/8704553f-98b8-41ed-8b1b-76ccbde899b3" />
+
+<img width="1366" height="660" alt="image" src="https://github.com/user-attachments/assets/41b1e2da-9768-468d-8822-ca8f0aec8bd0" />
