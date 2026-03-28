@@ -9,6 +9,8 @@ el hardwear real SI usara Wifi y spotify API y se mostrara en el codigo.
 !!! 3D DISIGN THINKERCARD !!!
 https://www.tinkercad.com/things/85gUmQEyrX8-neat-luulia-snicket
 
+!!!!!!! WOKWI !!!!!
+https://wokwi.com/projects/459699418280073217
 
 
 
