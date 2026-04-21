@@ -1,0 +1,373 @@
+/*
+ * ============================================================
+ *  iPod ESP32 — Spotify Display (HARDWARE REAL)
+ *  Autor: Ana Antunez Martinez
+ *
+ *  Hardware:
+ *    - ESP32 DevKit V1
+ *    - OLED SSD1306 128x64 I2C  (SDA=D21, SCL=D22)
+ *    - Botón PLAY/PAUSE  → GPIO 32
+ *    - Botón NEXT        → GPIO 33
+ *    - Botón PREV        → GPIO 25
+ *
+ *  Librerías (Library Manager):
+ *    - Adafruit GFX Library
+ *    - Adafruit SSD1306
+ *    - ArduinoJson  (by Benoit Blanchon)
+ *
+ *  PASOS ANTES DE FLASHEAR:
+ *  1. Corre get_token.py en tu PC
+ *  2. Rellena las 5 constantes de la sección CONFIG
+ * ============================================================
+ */
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// ============================================================
+//  CONFIG — RELLENA ESTO CON TUS DATOS
+// ============================================================
+const char* WIFI_SSID        = "TU_RED_WIFI";
+const char* WIFI_PASSWORD    = "TU_CONTRASEÑA";
+const char* CLIENT_ID        = "TU_CLIENT_ID";
+const char* CLIENT_SECRET    = "TU_CLIENT_SECRET";
+const char* REFRESH_TOKEN    = "TU_REFRESH_TOKEN";
+// ============================================================
+
+// ----- OLED -----
+#define SCREEN_WIDTH  128
+#define SCREEN_HEIGHT  64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// ----- Botones -----
+#define BTN_PLAY 32
+#define BTN_NEXT 33
+#define BTN_PREV 25
+#define DEBOUNCE 300
+
+// ----- Estado -----
+String accessToken    = "";
+unsigned long tokenExpiry = 0;
+
+String songTitle  = "Conectando...";
+String songArtist = "";
+int    durationMs = 1;
+int    progressMs = 0;
+bool   isPlaying  = false;
+
+unsigned long lastPollMs = 0;
+unsigned long lastTickMs = 0;
+unsigned long lastBtnMs  = 0;
+const unsigned long POLL_INTERVAL = 5000;   // consulta Spotify cada 5 s
+
+// ============================================================
+//  BASE64 (para el header de autenticación)
+// ============================================================
+String base64Encode(const String& input) {
+  static const char* chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  String out = "";
+  int len = input.length();
+  int idx = 0;
+  unsigned char buf3[3], buf4[4];
+
+  while (idx < len) {
+    int j = 0;
+    while (j < 3 && idx < len) buf3[j++] = input[idx++];
+    if (j > 0) {
+      buf4[0] = (buf3[0] & 0xfc) >> 2;
+      buf4[1] = ((buf3[0] & 0x03) << 4) + ((j > 1 ? buf3[1] : 0) >> 4);
+      buf4[2] = j > 1 ? (((buf3[1] & 0x0f) << 2) + ((j > 2 ? buf3[2] : 0) >> 6)) : 64;
+      buf4[3] = j > 2 ? (buf3[2] & 0x3f) : 64;
+      for (int k = 0; k < 4; k++)
+        out += (buf4[k] == 64) ? '=' : chars[buf4[k]];
+    }
+  }
+  return out;
+}
+
+// ============================================================
+//  DISPLAY
+// ============================================================
+void printTime(int sec) {
+  int m = sec / 60, s = sec % 60;
+  if (m < 10) display.print("0");
+  display.print(m);
+  display.print(":");
+  if (s < 10) display.print("0");
+  display.print(s);
+}
+
+void showMessage(const char* line1, const char* line2 = "") {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(2, 20); display.print(line1);
+  display.setCursor(2, 36); display.print(line2);
+  display.display();
+}
+
+void drawScreen() {
+  display.clearDisplay();
+
+  // ── Header ──
+  display.fillRect(0, 0, 128, 13, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK);
+  display.setTextSize(1);
+  display.setCursor(3, 3);
+  display.print("SPOTIFY");
+  display.setCursor(72, 3);
+  display.print(isPlaying ? ">> PLAYING" : "|| PAUSED ");
+
+  // ── Título ──
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(2, 17);
+  String title = songTitle;
+  if (title.length() > 20) title = title.substring(0, 19) + ".";
+  display.print(title);
+
+  // ── Artista ──
+  display.setCursor(2, 27);
+  String artist = songArtist;
+  if (artist.length() > 20) artist = artist.substring(0, 19) + ".";
+  display.print(artist);
+
+  // ── Separador ──
+  display.drawLine(0, 38, 128, 38, SSD1306_WHITE);
+
+  // ── Barra de progreso ──
+  int barW   = 120;
+  int filled = (durationMs > 0) ? map(progressMs, 0, durationMs, 0, barW) : 0;
+  filled = constrain(filled, 0, barW);
+  display.drawRect(4, 42, barW, 5, SSD1306_WHITE);
+  display.fillRect(4, 42, filled, 5, SSD1306_WHITE);
+  display.fillCircle(4 + filled, 44, 3, SSD1306_WHITE);
+
+  // ── Tiempos ──
+  display.setCursor(2, 54);  printTime(progressMs / 1000);
+  display.setCursor(95, 54); printTime(durationMs  / 1000);
+
+  display.display();
+}
+
+// ============================================================
+//  WIFI
+// ============================================================
+void connectWiFi() {
+  showMessage("Conectando WiFi...", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 40) {
+    delay(500);
+    tries++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    showMessage("WiFi conectado!", WiFi.localIP().toString().c_str());
+    delay(1200);
+  } else {
+    showMessage("WiFi FALLO", "Revisa SSID/pass");
+    while (true) delay(1000);
+  }
+}
+
+// ============================================================
+//  SPOTIFY AUTH
+// ============================================================
+bool refreshAccessToken() {
+  HTTPClient http;
+  http.begin("https://accounts.spotify.com/api/token");
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  String creds   = String(CLIENT_ID) + ":" + String(CLIENT_SECRET);
+  String encoded = base64Encode(creds);
+  http.addHeader("Authorization", "Basic " + encoded);
+
+  String body = "grant_type=refresh_token&refresh_token=" + String(REFRESH_TOKEN);
+  int code = http.POST(body);
+
+  if (code == 200) {
+    DynamicJsonDocument doc(512);
+    deserializeJson(doc, http.getString());
+    accessToken  = doc["access_token"].as<String>();
+    int expiresIn = doc["expires_in"] | 3600;
+    tokenExpiry  = millis() + (unsigned long)(expiresIn - 60) * 1000UL;
+    http.end();
+    return true;
+  }
+  http.end();
+  return false;
+}
+
+void ensureToken() {
+  if (accessToken == "" || millis() > tokenExpiry) {
+    showMessage("Renovando token...");
+    if (!refreshAccessToken()) {
+      showMessage("Token fallido", "Revisa credenciales");
+      delay(3000);
+    }
+  }
+}
+
+// ============================================================
+//  SPOTIFY — Currently Playing
+// ============================================================
+void fetchCurrentTrack() {
+  ensureToken();
+  if (accessToken == "") return;
+
+  HTTPClient http;
+  http.begin("https://api.spotify.com/v1/me/player/currently-playing");
+  http.addHeader("Authorization", "Bearer " + accessToken);
+  int code = http.GET();
+
+  if (code == 200) {
+    DynamicJsonDocument doc(4096);
+    DeserializationError err = deserializeJson(doc, http.getStream());
+    if (!err) {
+      isPlaying  = doc["is_playing"]           | false;
+      progressMs = doc["progress_ms"]           | 0;
+      durationMs = doc["item"]["duration_ms"]   | 1;
+      songTitle  = doc["item"]["name"].as<String>();
+
+      songArtist = "";
+      JsonArray artists = doc["item"]["artists"].as<JsonArray>();
+      for (JsonObject a : artists) {
+        if (songArtist != "") songArtist += ", ";
+        songArtist += a["name"].as<String>();
+      }
+      lastTickMs = millis();
+    }
+  } else if (code == 204) {
+    songTitle  = "Sin reproduccion";
+    songArtist = "Abre Spotify :)";
+    isPlaying  = false;
+  } else if (code == 401) {
+    accessToken = "";   // forzar renovación en la siguiente llamada
+  }
+  http.end();
+}
+
+// ============================================================
+//  SPOTIFY — Controles
+// ============================================================
+void spotifyPUT(const char* endpoint) {
+  ensureToken();
+  if (accessToken == "") return;
+  HTTPClient http;
+  http.begin(String("https://api.spotify.com/v1/me/player/") + endpoint);
+  http.addHeader("Authorization", "Bearer " + accessToken);
+  http.addHeader("Content-Length", "0");
+  http.PUT("");
+  http.end();
+}
+
+void spotifyPOST(const char* endpoint) {
+  ensureToken();
+  if (accessToken == "") return;
+  HTTPClient http;
+  http.begin(String("https://api.spotify.com/v1/me/player/") + endpoint);
+  http.addHeader("Authorization", "Bearer " + accessToken);
+  http.addHeader("Content-Length", "0");
+  http.POST("");
+  http.end();
+}
+
+void spotifyPlay()  { spotifyPUT("play");     delay(300); fetchCurrentTrack(); }
+void spotifyPause() { spotifyPUT("pause");    delay(300); fetchCurrentTrack(); }
+void spotifyNext()  { spotifyPOST("next");    delay(300); fetchCurrentTrack(); }
+void spotifyPrev()  { spotifyPOST("previous");delay(300); fetchCurrentTrack(); }
+void spotifySeek0() {
+  spotifyPUT("seek?position_ms=0");
+  progressMs = 0;
+  lastTickMs = millis();
+}
+
+// ============================================================
+//  SETUP
+// ============================================================
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(BTN_PLAY, INPUT_PULLUP);
+  pinMode(BTN_NEXT, INPUT_PULLUP);
+  pinMode(BTN_PREV, INPUT_PULLUP);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("ERROR: SSD1306 no encontrado. Revisa cableado I2C.");
+    while (true);
+  }
+
+  // Splash screen
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+  display.setCursor(10, 8);  display.print("SPOTIFY");
+  display.setTextSize(1);
+  display.setCursor(20, 32); display.print("ESP32 DISPLAY");
+  display.setCursor(16, 46); display.print("by Ana Antunez");
+  display.display();
+  delay(2000);
+
+  connectWiFi();
+
+  showMessage("Autenticando...", "Spotify API");
+  if (!refreshAccessToken()) {
+    showMessage("Auth fallida :(", "Revisa credenciales");
+    while (true) delay(1000);
+  }
+
+  fetchCurrentTrack();
+  lastPollMs = millis();
+}
+
+// ============================================================
+//  LOOP
+// ============================================================
+void loop() {
+  unsigned long now = millis();
+
+  // ── Botones ──────────────────────────────────────────────
+  if (now - lastBtnMs > DEBOUNCE) {
+
+    if (digitalRead(BTN_PLAY) == LOW) {
+      isPlaying ? spotifyPause() : spotifyPlay();
+      lastBtnMs = now;
+    }
+
+    if (digitalRead(BTN_NEXT) == LOW) {
+      spotifyNext();
+      lastBtnMs = now;
+    }
+
+    if (digitalRead(BTN_PREV) == LOW) {
+      // Si llevamos más de 3 s → reinicia canción; si no → canción anterior
+      if (progressMs > 3000) {
+        spotifySeek0();
+      } else {
+        spotifyPrev();
+      }
+      lastBtnMs = now;
+    }
+  }
+
+  // ── Tick local (mueve la barra sin esperar el poll) ──────
+  if (isPlaying && now - lastTickMs >= 1000) {
+    progressMs += (int)(now - lastTickMs);
+    if (progressMs > durationMs) progressMs = durationMs;
+    lastTickMs = now;
+  }
+
+  // ── Poll a Spotify ────────────────────────────────────────
+  if (now - lastPollMs >= POLL_INTERVAL) {
+    fetchCurrentTrack();
+    lastPollMs = now;
+  }
+
+  // ── Dibujar pantalla ──────────────────────────────────────
+  drawScreen();
+  delay(50);
+}
