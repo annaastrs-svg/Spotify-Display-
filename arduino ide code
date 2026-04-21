@@ -1,0 +1,5 @@
+const char* WIFI_SSID        = "TU_RED_WIFI";
+const char* WIFI_PASSWORD    = "TU_CONTRASEÑA";
+const char* CLIENT_ID        = "TU_CLIENT_ID";
+const char* CLIENT_SECRET    = "TU_CLIENT_SECRET";
+const char* REFRESH_TOKEN    = "TU_REFRESH_TOKEN";   // ← del script get_token.py
